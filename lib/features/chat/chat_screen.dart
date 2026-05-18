@@ -34,6 +34,8 @@ class _ChatScreenState extends State<ChatScreen>
   bool _ouvindo = false;
   bool _pensando = false;
   String _textoOuvindo = '';
+  bool _silenciado = false;
+  final TextEditingController _textoController = TextEditingController();
 
   // Animação do botão de voz
   late AnimationController _pulseController;
@@ -102,6 +104,10 @@ class _ChatScreenState extends State<ChatScreen>
     final saudacao = await _orchestrator.getSaudacaoInicial();
     _adicionarMensagem(saudacao, ehSonin: true, especial: true);
     await _tts.falar(saudacao, momentoEspecial: true);
+    // Só fala se não estiver silenciado
+    if (!_silenciado) {
+      await _tts.falar(saudacao, momentoEspecial: true);
+    }
   }
 
 
@@ -135,8 +141,10 @@ class _ChatScreenState extends State<ChatScreen>
     // Adicionar resposta da Sonin.IA
     _adicionarMensagem(resposta, ehSonin: true);
 
-    // Falar a resposta
-    await _tts.falar(resposta);
+    // Falar a resposta (só se não estiver silenciado)
+    if (!_silenciado) {
+      await _tts.falar(resposta);
+    }
   }
 
   void _adicionarMensagem(String texto, {
@@ -346,11 +354,29 @@ class _ChatScreenState extends State<ChatScreen>
             ),
           ),
 
-          // Botão de configurações discreto
-          IconButton(
-            icon: const Icon(Icons.more_vert, color: _textoSecundario),
-            onPressed: () {},
-            iconSize: 20,
+          // Botão silenciar e configurações
+          Row(
+            children: [
+              // Botão silenciar
+              IconButton(
+                icon: Icon(
+                  _silenciado ? Icons.volume_off_rounded : Icons.volume_up_rounded,
+                  color: _silenciado ? _rosaPrincipal : _textoSecundario,
+                  size: 22,
+                ),
+                onPressed: () {
+                  setState(() => _silenciado = !_silenciado);
+                  if (_silenciado) _tts.parar();
+                },
+                tooltip: _silenciado ? 'Ativar voz' : 'Silenciar voz',
+              ),
+              // Configurações
+              IconButton(
+                icon: const Icon(Icons.more_vert, color: _textoSecundario),
+                onPressed: () {},
+                iconSize: 20,
+              ),
+            ],
           ),
         ],
       ),
@@ -599,69 +625,171 @@ class _ChatScreenState extends State<ChatScreen>
 
 
   // ----------------------------------------------------------
-  // BOTÃO DE VOZ PRINCIPAL
+  // ÁREA INFERIOR — campo de texto + botão de voz
   // ----------------------------------------------------------
   Widget _buildBotaoVoz() {
     return Container(
-      padding: const EdgeInsets.only(bottom: 32, top: 16),
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.85),
+        borderRadius: const BorderRadius.only(
+          topLeft: Radius.circular(24),
+          topRight: Radius.circular(24),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: _rosaPrincipal.withOpacity(0.1),
+            blurRadius: 12,
+            offset: const Offset(0, -4),
+          ),
+        ],
+      ),
       child: Column(
         children: [
-          // Texto de instrução
-          Text(
-            _ouvindo ? 'Toque para parar' : 'Toque e fale comigo',
-            style: TextStyle(
-              fontSize: 13,
-              color: _textoSecundario,
-            ),
-          ),
-          const SizedBox(height: 12),
 
-          // Botão principal
-          GestureDetector(
-            onTap: _toggleVoz,
-            child: AnimatedBuilder(
-              animation: _pulseAnimation,
-              builder: (context, child) {
-                return Transform.scale(
-                  scale: _ouvindo ? _pulseAnimation.value : 1.0,
-                  child: child,
-                );
-              },
-              child: Container(
-                width: 80,
-                height: 80,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: RadialGradient(
-                    colors: _ouvindo
-                        ? [
-                            const Color(0xFFE91E63),
-                            const Color(0xFFC2185B),
-                          ]
-                        : [
-                            _rosaPrincipal,
-                            const Color(0xFFE91E63),
-                          ],
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: _rosaPrincipal.withOpacity(0.5),
-                      blurRadius: _ouvindo ? 20 : 12,
-                      spreadRadius: _ouvindo ? 4 : 0,
+          // Campo de texto
+          Row(
+            children: [
+              Expanded(
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: _rosaClaro,
+                    borderRadius: BorderRadius.circular(24),
+                    border: Border.all(
+                      color: _rosaPrincipal.withOpacity(0.3),
                     ),
-                  ],
-                ),
-                child: Icon(
-                  _ouvindo ? Icons.stop_rounded : Icons.mic_rounded,
-                  color: Colors.white,
-                  size: 36,
+                  ),
+                  child: TextField(
+                    controller: _textoController,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      color: _textoPrincipal,
+                    ),
+                    decoration: InputDecoration(
+                      hintText: 'Digite aqui...',
+                      hintStyle: TextStyle(
+                        color: _textoSecundario.withOpacity(0.6),
+                        fontSize: 15,
+                      ),
+                      border: InputBorder.none,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 20,
+                        vertical: 12,
+                      ),
+                    ),
+                    maxLines: 3,
+                    minLines: 1,
+                    textCapitalization: TextCapitalization.sentences,
+                    onSubmitted: (texto) => _enviarTextoDigitado(),
+                  ),
                 ),
               ),
-            ),
+              const SizedBox(width: 8),
+
+              // Botão enviar texto
+              GestureDetector(
+                onTap: _enviarTextoDigitado,
+                child: Container(
+                  width: 46,
+                  height: 46,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: _rosaPrincipal,
+                    boxShadow: [
+                      BoxShadow(
+                        color: _rosaPrincipal.withOpacity(0.4),
+                        blurRadius: 8,
+                      ),
+                    ],
+                  ),
+                  child: const Icon(
+                    Icons.send_rounded,
+                    color: Colors.white,
+                    size: 20,
+                  ),
+                ),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 12),
+
+          // Botão de voz grande
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              // Texto de instrução
+              Column(
+                children: [
+                  Text(
+                    _ouvindo ? 'Toque para parar' : 'Toque e fale comigo',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: _textoSecundario,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+
+                  // Botão principal
+                  GestureDetector(
+                    onTap: _toggleVoz,
+                    child: AnimatedBuilder(
+                      animation: _pulseAnimation,
+                      builder: (context, child) {
+                        return Transform.scale(
+                          scale: _ouvindo ? _pulseAnimation.value : 1.0,
+                          child: child,
+                        );
+                      },
+                      child: Container(
+                        width: 72,
+                        height: 72,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          gradient: RadialGradient(
+                            colors: _ouvindo
+                                ? [
+                                    const Color(0xFFE91E63),
+                                    const Color(0xFFC2185B),
+                                  ]
+                                : [
+                                    _rosaPrincipal,
+                                    const Color(0xFFE91E63),
+                                  ],
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: _rosaPrincipal.withOpacity(0.5),
+                              blurRadius: _ouvindo ? 20 : 12,
+                              spreadRadius: _ouvindo ? 4 : 0,
+                            ),
+                          ],
+                        ),
+                        child: Icon(
+                          _ouvindo
+                              ? Icons.stop_rounded
+                              : Icons.mic_rounded,
+                          color: Colors.white,
+                          size: 32,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
           ),
         ],
       ),
     );
+  }
+
+  // Enviar texto digitado
+  Future<void> _enviarTextoDigitado() async {
+    final texto = _textoController.text.trim();
+    if (texto.isEmpty) return;
+    _textoController.clear();
+    await _enviarMensagem(texto);
   }
 
 
@@ -669,6 +797,7 @@ class _ChatScreenState extends State<ChatScreen>
   void dispose() {
     _pulseController.dispose();
     _scrollController.dispose();
+    _textoController.dispose();
     _stt.cancelar();
     _tts.parar();
     super.dispose();
