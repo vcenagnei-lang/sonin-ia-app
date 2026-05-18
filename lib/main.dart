@@ -1,95 +1,131 @@
-import 'dart:async';
-import 'dart:math';
+// ============================================================
+// main.dart
+// Ponto de entrada da Sonin.IA
+// Liga todos os módulos e abre o app
+// ============================================================
+
 import 'package:flutter/material.dart';
-import 'package:flutter_dotenv/flutter_dotenv.dart';
-import 'package:flutter_phoenix/flutter_phoenix.dart';
-import 'package:provider/provider.dart';
-import 'package:flutter_voice_friend/config.dart';
-import 'package:flutter_voice_friend/screens/main_screen.dart';
-import 'package:flutter_voice_friend/services/animation_controller_service.dart';
-import 'package:flutter_voice_friend/services/connection_service.dart';
-import 'package:flutter_voice_friend/services/session_service.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:isar/isar.dart';
+import 'package:flutter/services.dart';
+import 'package:get_it/get_it.dart';
+import 'package:timezone/data/latest.dart' as tz;
 
-import 'package:flutter_voice_friend/activities.dart';
-import 'package:flutter_voice_friend/models/activity.dart';
-import 'package:flutter_voice_friend/models/session.dart';
-import 'package:flutter_voice_friend/services/audio_service.dart';
-import 'package:flutter_voice_friend/services/speech_service.dart';
-import 'package:flutter_voice_friend/services/user_service.dart';
-import 'package:flutter_voice_friend/services/llm_service.dart';
+import 'data/local/database_helper.dart';
+import 'data/remote/gemini_service.dart';
+import 'ai/orchestrator.dart';
+import 'voice/stt_service.dart';
+import 'voice/tts_service.dart';
+import 'features/chat/chat_screen.dart';
+import 'features/devocional/devocional_service.dart';
+import 'features/devocional/devocional_screen.dart';
 
-late Isar isar;
+// Injetor de dependências — acesso global aos serviços
+final getIt = GetIt.instance;
 
-Random random = Random();
-const infoColor = Color.fromRGBO(69, 0, 0, 1);
-const textColor = Color.fromRGBO(255, 255, 255, 1);
-
-Future<void> main() async {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  await dotenv.load();
+  // Deixar só em modo retrato — mais simples para idosos
+  await SystemChrome.setPreferredOrientations([
+    DeviceOrientation.portraitUp,
+  ]);
 
-  final docsDir = await getApplicationDocumentsDirectory();
+  // Inicializar fusos horários (para notificações)
+  tz.initializeTimeZones();
 
-  Config.openaiApiKey = dotenv.env['OPENAI_API_KEY'] ?? '';
-  Config.deepgramApiKey = dotenv.env['DEEPGRAM_API_KEY'] ?? '';
+  // Registrar todos os serviços
+  await _configurarServicos();
 
-  if (Config.openaiApiKey.isEmpty || Config.deepgramApiKey.isEmpty) {
-    throw Exception('API keys are missing in the .env file');
-  }
+  runApp(const SoninApp());
+}
 
-  isar = await Isar.open([ActivitySchema, SessionSchema],
-      directory: docsDir.path, name: "demo");
-  await syncActivities(isar);
 
-  runApp(
-    Phoenix(
-      child: const FlutterVoiceFriendDemoApp(),
+// ----------------------------------------------------------
+// CONFIGURAR SERVIÇOS
+// ----------------------------------------------------------
+Future<void> _configurarServicos() async {
+
+  // Banco de dados
+  getIt.registerSingleton<DatabaseHelper>(DatabaseHelper());
+
+  // IA Gemini
+  getIt.registerSingleton<GeminiService>(GeminiService());
+
+  // Cérebro central
+  getIt.registerSingleton<Orchestrator>(Orchestrator());
+
+  // Voz
+  getIt.registerSingleton<SttService>(SttService());
+  getIt.registerSingleton<TtsService>(TtsService());
+
+  // Devocional
+  // Chave do Gemini via --dart-define=GEMINI_API_KEY=... ao compilar
+  const geminiKey = String.fromEnvironment(
+    'GEMINI_API_KEY',
+    defaultValue: '',
+  );
+
+  getIt.registerSingleton<DevocionalService>(
+    DevocionalService(
+      geminiApiKey: geminiKey,
+      databaseHelper: getIt<DatabaseHelper>(),
+      orchestrator: getIt<Orchestrator>(),
     ),
   );
 }
 
-class FlutterVoiceFriendDemoApp extends StatelessWidget {
-  const FlutterVoiceFriendDemoApp({super.key});
+
+// ----------------------------------------------------------
+// APP PRINCIPAL
+// ----------------------------------------------------------
+class SoninApp extends StatelessWidget {
+  const SoninApp({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return MultiProvider(
-      providers: [
-        Provider<SessionService>(
-          create: (_) => SessionService(isar: isar),
-        ),
-        Provider<AudioService>(
-          create: (_) => AudioService(),
-        ),
-        Provider<SpeechService>(
-          create: (_) => SpeechService(),
-        ),
-        ChangeNotifierProvider<UserService>(
-          create: (_) => UserService(),
-        ),
-        Provider<LLMService>(
-          create: (_) => LLMService(),
-        ),
-        Provider<AnimationControllerService>(
-          create: (_) => AnimationControllerService(),
-        ),
-        Provider<ConnectionService>(
-          create: (_) => ConnectionService(),
-        ),
-      ],
-      child: MaterialApp(
-        title: 'FlutterVoiceFriend',
-        debugShowCheckedModeBanner: false, // Disable the debug banner
+    return MaterialApp(
+      title: 'Sonin.IA',
+      debugShowCheckedModeBanner: false,
 
-        theme: ThemeData(
-          primarySwatch: Colors.blue,
-          brightness: Brightness.dark,
+      // Tema geral — rosa pastel e floral
+      theme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFFF48FB1),
+          brightness: Brightness.light,
         ),
-        home: MainScreen(isar: isar),
+        useMaterial3: true,
+
+        // Fonte padrão
+        fontFamily: 'PlayfairDisplay',
+
+        // Textos grandes para idosos
+        textTheme: const TextTheme(
+          bodyLarge: TextStyle(fontSize: 17),
+          bodyMedium: TextStyle(fontSize: 15),
+          bodySmall: TextStyle(fontSize: 13),
+        ),
+
+        // AppBar limpa
+        appBarTheme: const AppBarTheme(
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          scrolledUnderElevation: 0,
+        ),
+
+        // Visual geral
+        scaffoldBackgroundColor: const Color(0xFFFFF8F0),
       ),
+
+      // Tela inicial
+      home: const ChatScreen(),
+
+      // Rotas do app
+      routes: {
+        '/chat':       (context) => const ChatScreen(),
+        '/devocional': (context) => DevocionalScreen(
+          service:    getIt<DevocionalService>(),
+          ttsService: getIt<TtsService>(),
+        ),
+      },
     );
   }
 }
